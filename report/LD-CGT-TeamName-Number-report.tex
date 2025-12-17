@@ -1,0 +1,97 @@
+\documentclass[sigconf,nonacm]{acmart}
+
+\usepackage{amsmath,amssymb,amsfonts,latexsym}
+\usepackage{enumerate}
+\usepackage{xspace}
+\usepackage{epsf,picinpar}
+\usepackage{varioref}
+\usepackage{colortbl,multirow,hhline}
+\usepackage{listings}
+\usepackage{amssymb}
+\usepackage{colortbl,multirow,hhline}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{caption}
+\usepackage[normalem]{ulem}
+\usepackage{xcolor}
+\usepackage{pifont}
+\usepackage{xcolor,colortbl}
+\usepackage{url}
+\usepackage{balance}
+\usepackage{graphicx, subfigure}
+\usepackage{longtable}
+\usepackage{lscape}
+\usepackage{multirow}
+\usepackage{listings}
+\usepackage{framed}
+\usepackage{morefloats}
+\usepackage[T1]{fontenc}
+\usepackage{array}
+\usepackage{pdfpages}
+\usepackage{fancybox}
+\usepackage{amsmath}
+\usepackage{flushend}
+\usepackage{booktabs}
+\usepackage{enumitem}
+
+\renewcommand{\ttdefault}{cmr}
+
+%\newcommand{\limit}[1]{\textcolor{red}{\noindent \ding{46}~Page limit:~#1}\\}
+\newcommand{\todo}[1]{\textcolor{blue}{\ding{46}~#1}} 
+\newcommand{\ie}{\emph{i.e.,}\xspace}
+\newcommand{\eg}{\emph{e.g.,}\xspace}
+\newcommand{\etc}{etc.\xspace}
+\newcommand{\etal}{\emph{et~al.}\xspace} 
+
+\copyrightyear{2025}
+\acmYear{2025}
+\setcopyright{none}
+%\acmConference[LD/CGT 2024/2025]{Course LD/CGT 2024/2025 - Université Libre de Bruxelles  and Vrije Universiteit Brussel}{January, 2025}{Brussels, Belgium}
+\acmBooktitle{Course LD/CGT 2024/2025 - Université Libre de Bruxelles  and Vrije Universiteit Brussel, January 2025, Brussels (Belgium)}
+    
+\begin{document}
+
+\title{
+	\todo{Achieving Cooperation in a Minimally Constrained Environment}
+}
+
+\author{Rahman Tektas}
+\affiliation{%
+ \institution{542557 \\ ULB}
+} \email{rahman.tektas@ulb.be}
+
+\author{Antoine Lefranc}
+\affiliation{%
+ \institution{Student Number \\ ULB}
+} \email{xyz@vub.be}
+
+\author{Victor t'Serstevens}
+\affiliation{%
+ \institution{Student Number \\ ULB}
+} \email{xyz@ulb.be}
+
+
+\begin{abstract}
+Provide in your own words a short summary of 
+\noindent \textit{Context}. 
+\noindent \textit{Goal}. 
+\noindent \textit{Method}. 
+\noindent \textit{Results}. 
+\noindent \textit{Conclusions} of the work you did.
+\textcolor{red}{Char limit: 1500}
+\end{abstract}
+
+\maketitle
+
+\input{intro}
+\input{related}
+\input{definition}
+\input{methods} 
+\input{results}
+\input{discussion}
+\input{conclusion} 
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

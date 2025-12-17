@@ -1,0 +1,17 @@
+# macOS
+__MACOSX/
+.DS_Store
+
+# LaTeX
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# Editor
+.vscode/
