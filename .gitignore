@@ -1,17 +1,25 @@
-# macOS
-__MACOSX/
+# OS junk
 .DS_Store
+__MACOSX/
 
-# LaTeX
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# LaTeX build
 *.aux
-*.log
-*.out
-*.toc
 *.bbl
 *.blg
-*.fls
 *.fdb_latexmk
+*.fls
+*.log
+*.out
 *.synctex.gz
+*.toc
+*.lof
+*.lot
 
-# Editor
-.vscode/
+# Jupyter
+.ipynb_checkpoints/
