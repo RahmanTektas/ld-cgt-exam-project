@@ -1,18 +1,19 @@
-# main.py (squelette minimal)
 import numpy as np
 from game import random_bimatrix_game
 from CooperativeAgent import CooperativeAgentAlgorithm
 
 def run(seed=0, T=1000, n_actions=16):
-    rng = np.random.default_rng(seed)
+    rng_env = np.random.default_rng(seed)
+    rng1 =    np.random.default_rng(seed+1)
+    rng2 =    np.random.default_rng(seed+2)
 
-    agent1 = CooperativeAgentAlgorithm(nb_actions=n_actions)
-    agent2 = CooperativeAgentAlgorithm(nb_actions=n_actions)
+    agent1 = CooperativeAgentAlgorithm(nb_actions=n_actions, rng = rng1)
+    agent2 = CooperativeAgentAlgorithm(nb_actions=n_actions, rng = rng2)
 
     for t in range(T):
-        A, B = random_bimatrix_game(n_actions, rng=rng)
+        A, B = random_bimatrix_game(n_actions, rng=rng_env)
 
-        # IMPORTANT: les deux doivent observer le même jeu
+        # both players observe the same game
         agent1.A, agent1.B = A, B
         agent2.A, agent2.B = A, B
 
@@ -22,7 +23,7 @@ def run(seed=0, T=1000, n_actions=16):
         r1 = A[a1, a2]
         r2 = B[a1, a2]
 
-        # chacun observe le move adverse, puis update
+        # each observe opponent move and update
         agent1.m = a2
         agent2.m = a1
         agent1.update_model()

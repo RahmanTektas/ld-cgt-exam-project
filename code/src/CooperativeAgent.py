@@ -23,6 +23,7 @@ class CooperativeAgentAlgorithm:
     def __init__(
         self,
         ### (a) Select values for parameters ###
+        rng : np.random.Generator,
         nb_actions: int = 16,                    # Number of actions   (16 is the best empirical number of actions given by authors)
         nb_particles: int = 500,                 # Number of particles (No given number in the paper)
         reciprocation: float = 0.1,              # Reciprocation level (Authors use a reciprocation level of .1)
@@ -36,6 +37,7 @@ class CooperativeAgentAlgorithm:
         self.r = reciprocation
         self.fab = fab
         self.fnash = fnash
+        self.rng = rng
 
 
         ### (b) lookup table T with t(j,k,l) ###
@@ -44,11 +46,11 @@ class CooperativeAgentAlgorithm:
 
         ### (c) initial particle set ###
         set = []
+        
         for i in range(self.n):
-            rng = np.random.default_rng(seed=42)
-            att = rng.normal(0.0, 1.0)
-            bel = rng.normal(0.0, 1.0)
-            nash = np.random.Generator.integers(0, 2 * self.nb_actions) # drawn from a uniform distribution over the set of possible starting parameters of L-H algorithm
+            att = self.rng.normal(0.0, 1.0)
+            bel = self.rng.normal(0.0, 1.0)
+            nash = self.rng.integers(0, 2 * self.nb_actions) # drawn from a uniform distribution over the set of possible starting parameters of L-H algorithm
             set.append(Particle(att=att, bel=bel, nash=nash))
         self.particles = set
 
@@ -84,7 +86,8 @@ class CooperativeAgentAlgorithm:
         sigma_row, sigma_col = one_nash_equilibrium(A_mod, B_mod, nash_opp)
 
         # (d) Draw move from ne_agent
-        return np.random.Generator.choice(self.nb_actions, p=sigma_row)
+        
+        return self.rng.choice(self.nb_actions, p=sigma_row)
 
     ####### 4. Observe opponent move m #######
     
@@ -143,8 +146,8 @@ class CooperativeAgentAlgorithm:
         if weights.sum() == 0.0: # check for degenerate case
             weights[:] = 1.0
         weights = weights / weights.sum()
-
-        p_idx = np.random.Generator.choice(self.n, size=self.n, p=weights)
+        
+        p_idx = self.rng.choice(self.n, size=self.n, p=weights)
         new_particles = [self.particles[i] for i in p_idx]
 
         # (c) Perturb particles 
@@ -152,15 +155,15 @@ class CooperativeAgentAlgorithm:
         for p in new_particles:
 
             # i. Modify attitude of each particle
-            att_new = np.random.Generator.normal(loc=p.att, scale=np.sqrt(max(0.0, error_est * self.fab)))
+            att_new = self.rng.normal(loc=p.att, scale=np.sqrt(max(0.0, error_est * self.fab)))
 
             # ii. Modify belief of each particlex
-            bel_new = np.random.Generator.normal(loc=p.bel, scale=np.sqrt(max(0.0, error_est * self.fab)))
+            bel_new = self.rng.normal(loc=p.bel, scale=np.sqrt(max(0.0, error_est * self.fab)))
 
             # iii. With probability err ∗ fnash draw a new method of calculating Nash equilibria for each particle
             nash_new = p.nash
-            if np.random.random(0.0, 1.0) < error_est * self.fnash:
-                nash_new = np.random.Generator.integers(0, 2 * self.nb_actions)
+            if self.rng.random() < error_est * self.fnash:
+                nash_new = self.rng.integers(0, 2 * self.nb_actions)
 
             perturb_particles.append(Particle(att=att_new, bel=bel_new, nash=nash_new))
 
