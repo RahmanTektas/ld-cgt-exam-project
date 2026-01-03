@@ -6,8 +6,7 @@ from collections import Counter
 
 from modified_game import make_modified_game
 from nash import one_nash_equilibrium
-from metrics import cooperation
-from game import random_bimatrix_game
+
 
 
 @dataclass
@@ -61,15 +60,16 @@ class CooperativeAgentAlgorithm:
 
     ####### 2. Observe game G #######
 
-    def observe_game(self):
-        self.A, self.B = random_bimatrix_game(self.n)
+    def observe_game(self, A: np.ndarray, B: np.ndarray):
+        self.A = A
+        self.B = B
 
     ####### 3. Pick Move #######
 
     def pick_move(self):
         # (a) Estimate opponent’s parameters
-        att_opp = np.mean([p.att for p in self.particles])
-        bel_opp = np.mean([p.bel for p in self.particles])
+        att_opp = self.estimate_attitude()
+        bel_opp = self.estimate_belief()
         nash_opp = Counter([p.nash for p in self.particles]).most_common(1)[0][0] # from the most frequent value of Pnash
 
         self.last_att_opp = att_opp
@@ -77,13 +77,15 @@ class CooperativeAgentAlgorithm:
         self.last_nash_opp = nash_opp
 
         # (b) Set attitude att_agent = att_opp + r
-        att_agent = min(1.0, att_opp + self.r)
-        att_agent = max(0.0, att_agent)
+        # att_agent = min(1.0, att_opp + self.r)
+        # att_agent = max(0.0, att_agent)
+        att_agent = np.clip(att_opp + self.r, -1.0, 1.0)
 
         # (c) Construct modified game G'
         
         A_mod, B_mod = make_modified_game(self.A, self.B, att_agent, att_opp)
         sigma_row, sigma_col = one_nash_equilibrium(A_mod, B_mod, nash_opp)
+        self.last_sigma_col_pred = sigma_col
 
         # (d) Draw move from ne_agent
     
@@ -91,11 +93,19 @@ class CooperativeAgentAlgorithm:
 
     ####### 4. Observe opponent move m #######
     
-    def Observe_opponent(self):
-        # TODO
-        self.m = 3
+    def observe_opponent_move(self,m: int) -> None:
+        self.m = int(m)
+        
+    def estimate_attitude(self) -> float:
+        return float(np.mean([p.att for p in self.particles]))
 
-     ####### 5. Update Model #######
+    def estimate_belief(self) -> float:
+        return float(np.mean([p.bel for p in self.particles]))
+
+    def estimate_nash(self) -> int:
+        return int(Counter([p.nash for p in self.particles]).most_common(1)[0][0])
+
+    ####### 5. Update Model #######
 
     def update_model(self):
         # (a) Update error estimate 
@@ -137,8 +147,7 @@ class CooperativeAgentAlgorithm:
 
             # A. Create modified game using p_att_i and p_bel_i and calculate its ne using p_nash_i
             p_A, p_B = make_modified_game(self.A, self.B, att_row=p.bel, att_col=p.att)
-            assert np.isfinite(A_mod).all() and np.isfinite(B_mod).all()
-
+            assert np.isfinite(p_A).all() and np.isfinite(p_B).all()
             _, p_sigma_col = one_nash_equilibrium(p_A, p_B, p.nash)
 
             # B. Set weight for particle pi to nemop
