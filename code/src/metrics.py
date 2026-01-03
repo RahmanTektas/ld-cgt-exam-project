@@ -14,3 +14,6 @@ def cooperation(att_est: float, bel_est: float) -> float:
     """
     denom = np.sqrt(att_est * att_est + 1.0) * np.sqrt(bel_est * bel_est + 1.0)
     return float((att_est + bel_est) / denom)
+
+def compute_metrics():
+  print("TODO compute metrics")

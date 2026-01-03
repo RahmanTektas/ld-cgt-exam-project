@@ -25,7 +25,7 @@ class CooperativeAgentAlgorithm:
         ### (a) Select values for parameters ###
         rng : np.random.Generator,
         nb_actions: int = 16,                    # Number of actions   (16 is the best empirical number of actions given by authors)
-        nb_particles: int = 500,                 # Number of particles (No given number in the paper)
+        nb_particles: int = 100,                 # Number of particles (No given number in the paper)
         reciprocation: float = 0.1,              # Reciprocation level (Authors use a reciprocation level of .1)
         fab: float = 0.1,                        # Perturbation factor for attitude and belief (Authors use 10% of the error in the current estimate)
         fnash: float = 0.05,                     # Perturbation factor for methods of picking Nash equilibria (No given number in the paper)
@@ -86,7 +86,7 @@ class CooperativeAgentAlgorithm:
         sigma_row, sigma_col = one_nash_equilibrium(A_mod, B_mod, nash_opp)
 
         # (d) Draw move from ne_agent
-        
+    
         return self.rng.choice(self.nb_actions, p=sigma_row)
 
     ####### 4. Observe opponent move m #######
@@ -136,8 +136,10 @@ class CooperativeAgentAlgorithm:
         for i, p in enumerate(self.particles):
 
             # A. Create modified game using p_att_i and p_bel_i and calculate its ne using p_nash_i
-            p_A, p_A = make_modified_game(self.A, self.B, att_row=p.bel, att_col=p.att)
-            _, p_sigma_col = one_nash_equilibrium(p_A, p_A, p.nash)
+            p_A, p_B = make_modified_game(self.A, self.B, att_row=p.bel, att_col=p.att)
+            assert np.isfinite(A_mod).all() and np.isfinite(B_mod).all()
+
+            _, p_sigma_col = one_nash_equilibrium(p_A, p_B, p.nash)
 
             # B. Set weight for particle pi to nemop
             weights[i] = float(p_sigma_col[self.m])
