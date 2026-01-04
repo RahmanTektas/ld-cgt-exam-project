@@ -109,12 +109,29 @@ class CooperativeAgentAlgorithm:
 
     @staticmethod
     def safe_probvec(p: np.ndarray, n: int) -> np.ndarray:
-        p = np.asarray(p, dtype=float)
-        if (not np.isfinite(p).all()) or p.sum() <= 0.0:
+        """
+        Ensures p is a valid probability distribution of size n.
+        If p is invalid (NaNs, wrong shape, sum=0), returns uniform dist.
+        """
+        # Flatten to ensure 1D array
+        p = np.asarray(p, dtype=float).flatten()
+        
+        # GUARD CLAUSE: Strict shape check
+        if p.shape[0] != n:
             return np.ones(n, dtype=float) / n
+            
+        # Check for NaNs or Infinite values
+        if not np.isfinite(p).all():
+            return np.ones(n, dtype=float) / n
+            
+        # Clip negatives and normalize
         p = np.clip(p, 0.0, None)
         s = p.sum()
-        return (p / s) if s > 0.0 else (np.ones(n, dtype=float) / n)
+        
+        if s <= 0.0:
+            return np.ones(n, dtype=float) / n
+            
+        return p / s
 
     ####### 3. Pick Move #######
 
@@ -173,19 +190,28 @@ class CooperativeAgentAlgorithm:
     ####### 5. Update Model #######
 
     def update_model(self):
+        """
+        Updates the error estimate and resamples particles based on the observed move.
+        This version is robust against solver failures and dimension mismatches.
+        """
         # (a) Update error estimate
+        # ---------------------------
         att_agent = float(self.last_bel_opp)
         att_opp = float(self.last_att_opp)
         A_mod, B_mod = make_modified_game(self.A, self.B, att_agent, att_opp)
         
-        # FIX 1: Safety check for error estimation
+        # Solve for the strategy we EXPECTED the opponent to play
         sol = solve_robust(nash.Game(A_mod, B_mod), int(self.last_nash_opp))
+        
         if sol is not None:
             _, sigma_col = sol
         else:
             sigma_col = np.ones(self.nb_actions) / self.nb_actions
             
+        # SAFETY: Ensure sigma_col is exactly size nb_actions (16)
         sigma_col = self.safe_probvec(sigma_col, self.nb_actions)
+        
+        # Now safe to index with self.m
         p_obs = float(sigma_col[self.m])
 
         # iv. Calculate cooperation value k
@@ -193,33 +219,45 @@ class CooperativeAgentAlgorithm:
         bel_est = float(np.clip(self.estimate_belief(), -1.0, 1.0))
         coop = float(np.clip(self.cooperation(att_est, bel_est), -1.0, 1.0))
 
+        # Update P(error) using the lookup table
         if self.use_lookup:
             j = self.bin_index(p_obs, self.prob_edges)
             k = self.bin_index(coop, self.coop_edges)
             lik = np.asarray(self.T[j, k, :], dtype=float)
+            
             self.P_error *= lik
             s = float(self.P_error.sum())
+            
             if (not np.isfinite(s)) or s <= 0.0:
                 self.P_error[:] = 1.0 / len(self.P_error)
             else:
                 self.P_error /= s
+            
             error_est = float(np.dot(self.P_error, self.error_levels))
         else:
-            error_est = 0.2
+            error_est = 0.2 # Fallback if no table
 
         # (b) Resample particles
+        # ----------------------
         weights = np.zeros(self.n, dtype=float)
+        
         for i, p in enumerate(self.particles):
+            # Create the game from this particle's perspective
             p_A, p_B = make_modified_game(self.A, self.B, att_row=p.bel, att_col=p.att)
             
-            # FIX 2: Safety check inside the particle loop
+            # Solve it
             p_sol = solve_robust(nash.Game(p_A, p_B), int(p.nash))
+            
             if p_sol is not None:
                 _, p_sigma_col = p_sol
             else:
+                # If solver fails, assume uniform distribution
                 p_sigma_col = np.ones(self.nb_actions) / self.nb_actions
                 
+            # SAFETY CHECK (The Fix): 
+            # Force the vector to be valid and size 16 BEFORE accessing index [self.m]
             p_sigma_col = self.safe_probvec(p_sigma_col, self.nb_actions)
+            
             weights[i] = float(p_sigma_col[self.m])
 
         # ii. Draw n particles
@@ -232,7 +270,9 @@ class CooperativeAgentAlgorithm:
         new_particles = [self.particles[i] for i in p_idx]
 
         # (c) Perturb particles
+        # ---------------------
         perturb_particles = []
+        # Perturbation scales with the estimated error
         sigma = max(1e-6, error_est * self.fab)
 
         for p in new_particles:
@@ -240,6 +280,7 @@ class CooperativeAgentAlgorithm:
             bel_new = float(np.clip(self.rng.normal(loc=p.bel, scale=sigma), -1.0, 1.0))
             
             nash_new = int(p.nash)
+            # Occasionally perturb the Nash equilibrium selection method
             if self.rng.random() < error_est * self.fnash:
                 nash_new = int(self.rng.integers(0, 2 * self.nb_actions))
 

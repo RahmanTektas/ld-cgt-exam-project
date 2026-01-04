@@ -10,7 +10,8 @@ from CooperativeAgent import CooperativeAgentAlgorithm
 from metrics import compute_metrics
 
 from modified_game import make_modified_game
-from nash import one_nash_equilibrium
+from nash import solve_robust
+import nashpy as nash
 
 
 def debug_particles(agent, label: str, t: int, every: int = 100) -> None:
@@ -94,7 +95,7 @@ def run_stationary(T=1000, n_actions=16, seed=42, outdir="results", lookup_path=
         # Lemke–Howson can be slow/hang on some games for larger n.
         # If your nash solver has issues, we’ll just fallback to uniform instead of freezing.
         try:
-            _, sigma_col = one_nash_equilibrium(A_opp, B_opp, opp_nash)
+            _, sigma_col = solve_robust(nash.game(A_opp, B_opp), opp_nash)
             sigma_col = safe_sigma(sigma_col, n_actions)
         except KeyboardInterrupt:
             raise
@@ -119,7 +120,7 @@ def run_stationary(T=1000, n_actions=16, seed=42, outdir="results", lookup_path=
         nash_est_before = Counter([p.nash for p in agent.particles]).most_common(1)[0][0]
         A_est, B_est = make_modified_game(A, B, att_row=bel_est_before, att_col=att_est_before)
         try:
-            _, sigma_col_est = one_nash_equilibrium(A_est, B_est, nash_est_before)
+            _, sigma_col_est = solve_robust(nash.game(A_est, B_est), nash_est_before)
             sigma_col_est = safe_sigma(sigma_col_est, n_actions)
         except KeyboardInterrupt:
             raise
