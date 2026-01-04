@@ -92,16 +92,18 @@ def run_stationary(T=1000, n_actions=16, seed=42, outdir="results", lookup_path=
         # 2) Opponent move
         A_opp, B_opp = make_modified_game(A, B, att_row=opp_bel, att_col=opp_att)
 
-        # Lemke–Howson can be slow/hang on some games for larger n.
-        # If your nash solver has issues, we’ll just fallback to uniform instead of freezing.
+        # Use the aggressive solver to find the opponent's strategy
         try:
-            _, sigma_col = solve_robust(nash.game(A_opp, B_opp), opp_nash)
+            _, sigma_col = solve_robust(nash.Game(A_opp, B_opp), opp_nash)
             sigma_col = safe_sigma(sigma_col, n_actions)
         except KeyboardInterrupt:
             raise
         except Exception:
+            # Fallback only if absolutely necessary (should rarely happen now)
             sigma_col = np.ones(n_actions, dtype=float) / n_actions
 
+
+        # Select the actual move
         opp_move = int(rng_opp.choice(n_actions, p=sigma_col))
         prob_true_t = float(sigma_col[opp_move])
 
