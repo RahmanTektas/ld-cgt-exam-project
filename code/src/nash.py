@@ -4,29 +4,25 @@ import nashpy as nash
 import warnings
 
 
-def one_nash_equilibrium(A: np.ndarray, B: np.ndarray, dropped_label: int = 0) -> tuple[np.ndarray, np.ndarray]:
+def solve_robust(game, opponent_method_prediction):
     """
-    One mixed NE via Lemke–Howson. The 'method of picking NE' is modeled
-    by the initial_dropped_label
+    Attempts to solve the game using Lemke-Howson.
+    Returns (row_strategy, col_strategy) or None on failure.
     """
-    game = nash.Game(A, B)
-
-    # Nashpy expects label in [0, 2*n - 1]
-    n = A.shape[0]
-    label = int(dropped_label) % (2 * n)
-
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-           category=RuntimeWarning,
-        )
-        sigma_row, sigma_col = game.lemke_howson(initial_dropped_label=label)
-
-    sr = np.clip(np.asarray(sigma_row, float), 0.0, None)
-    sc = np.clip(np.asarray(sigma_col, float), 0.0, None)
-
-    if sr.sum() == 0 or sc.sum() == 0:
-        u = np.ones(n) / n
-        return u, u
-
-    return sr / sr.sum(), sc / sc.sum()
+    try:
+        with warnings.catch_warnings():
+            # Treat numerical warnings as errors so we can catch them
+            warnings.filterwarnings('error') 
+            
+            # 1. Get the equilibrium (In your version, this is a tuple of 2 arrays)
+            eq = game.lemke_howson(initial_dropped_label=opponent_method_prediction)
+            
+            # 2. Check for NaNs
+            if np.isnan(eq[0]).any() or np.isnan(eq[1]).any():
+                return None
+                
+            return eq # This is (array_of_16, array_of_16)
+                
+    except (RuntimeWarning, ValueError, Exception):
+        # Catches 'invalid value in divide' or any other solver crash
+        return None
