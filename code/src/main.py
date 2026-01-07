@@ -5,12 +5,12 @@ import numpy as np
 from tqdm import tqdm
 from collections import Counter
 
-from game import random_bimatrix_game
-from CooperativeAgent import CooperativeAgentAlgorithm
-from metrics import compute_metrics
+from src.game import random_bimatrix_game
+from src.CooperativeAgent import CooperativeAgentAlgorithm
+from src.metrics import compute_metrics
 
-from modified_game import make_modified_game
-from nash import solve_robust
+from src.modified_game import make_modified_game
+from src.nash import solve_robust
 import nashpy as nash
 
 
