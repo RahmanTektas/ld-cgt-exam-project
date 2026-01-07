@@ -1,3 +1,6 @@
+# src/main.py
+from __future__ import annotations
+
 import os
 import json
 import argparse
@@ -33,13 +36,21 @@ def safe_sigma(sigma: np.ndarray, n_actions: int) -> np.ndarray:
     if (not np.isfinite(sigma).all()) or sigma.sum() <= 0.0:
         return np.ones(n_actions, dtype=float) / n_actions
     sigma = np.clip(sigma, 0.0, None)
-    s = sigma.sum()
+    s = float(sigma.sum())
     return sigma / s if s > 0.0 else (np.ones(n_actions, dtype=float) / n_actions)
 
 
-def run_stationary(T=1000, n_actions=16, seed=42, outdir="results", lookup_path="lookup_table.npz"):
-    print("[INFO] Starting stationary-opponent experiment")
-    print(f"[INFO] seed={seed}, T={T}, n_actions={n_actions}")
+def run_stationary(
+    T: int = 1000,
+    n_actions: int = 16,
+    seed: int = 42,
+    outdir: str = "results",
+    lookup_path: str = "lookup_table.npz",
+    quiet: bool = False,
+):
+    if not quiet:
+        print("[INFO] Starting stationary-opponent experiment")
+        print(f"[INFO] seed={seed}, T={T}, n_actions={n_actions}")
 
     rng_env = np.random.default_rng(seed)
     rng_agent = np.random.default_rng(seed + 1)
@@ -50,12 +61,12 @@ def run_stationary(T=1000, n_actions=16, seed=42, outdir="results", lookup_path=
     opp_bel = float(np.clip(rng_opp.normal(0.0, 1.0), -1.0, 1.0))
     opp_nash = int(rng_opp.integers(0, 2 * n_actions))
 
-    print(f"[INFO] Stationary opponent: att_true={opp_att:.3f}, bel_true={opp_bel:.3f}, nash_true={opp_nash}")
+    if not quiet:
+        print(f"[INFO] Stationary opponent: att_true={opp_att:.3f}, bel_true={opp_bel:.3f}, nash_true={opp_nash}")
 
-    # --- IMPORTANT: resolve lookup path robustly ---
-    # If lookup_path is relative, interpret it relative to the project root (where this file sits)
+    # --- resolve lookup path robustly ---
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(script_dir, ".."))  # assumes script is in src/scripts
+    project_root = os.path.abspath(os.path.join(script_dir, ".."))
     if not os.path.isabs(lookup_path):
         lookup_path = os.path.join(project_root, lookup_path)
 
@@ -66,8 +77,9 @@ def run_stationary(T=1000, n_actions=16, seed=42, outdir="results", lookup_path=
         lookup_path=lookup_path,
     )
 
-    print("[INFO] Lookup table path:", lookup_path)
-    print("[INFO] Lookup enabled:", getattr(agent, "use_lookup", False))
+    if not quiet:
+        print("[INFO] Lookup table path:", lookup_path)
+        print("[INFO] Lookup enabled:", getattr(agent, "use_lookup", False))
 
     logs = {
         "t": [],
@@ -83,46 +95,55 @@ def run_stationary(T=1000, n_actions=16, seed=42, outdir="results", lookup_path=
         "prob_true": [],
         "prob_est": [],
         "error_est": [],
+        # optional: store p_true very small events count, etc. (not necessary)
     }
 
-    for t in tqdm(range(T), desc="Simulating"):
+    it = range(T)
+    if not quiet:
+        it = tqdm(it, desc="Simulating")
+
+    for t in it:
         # 1) New random game
         A, B = random_bimatrix_game(n_actions, rng=rng_env)
 
-        # 2) Opponent move
+        # 2) Opponent move: opponent plays NE of its own modified game
         A_opp, B_opp = make_modified_game(A, B, att_row=opp_bel, att_col=opp_att)
 
-        # Use the aggressive solver to find the opponent's strategy
         try:
-            _, sigma_col = solve_robust(nash.Game(A_opp, B_opp), opp_nash)
-            sigma_col = safe_sigma(sigma_col, n_actions)
+            _, sigma_col_true = solve_robust(nash.Game(A_opp, B_opp), opp_nash)
+            sigma_col_true = safe_sigma(sigma_col_true, n_actions)
         except KeyboardInterrupt:
             raise
         except Exception:
-            # Fallback only if absolutely necessary (should rarely happen now)
-            sigma_col = np.ones(n_actions, dtype=float) / n_actions
+            sigma_col_true = np.ones(n_actions, dtype=float) / n_actions
 
-
-        # Select the actual move
-        opp_move = int(rng_opp.choice(n_actions, p=sigma_col))
-        prob_true_t = float(sigma_col[opp_move])
+        opp_move = int(rng_opp.choice(n_actions, p=sigma_col_true))
+        prob_true_t = float(sigma_col_true[opp_move])
 
         # 3) Agent move
         agent.A, agent.B = A, B
         agent_move = int(agent.pick_move())
 
-        # 4) Payoffs
+        # 4) Payoffs in ORIGINAL game
         r_agent = float(A[agent_move, opp_move])
         r_opp = float(B[agent_move, opp_move])
 
         # Estimates BEFORE update
         att_est_before = float(agent.estimate_attitude())
         bel_est_before = float(agent.estimate_belief())
-
         nash_est_before = Counter([p.nash for p in agent.particles]).most_common(1)[0][0]
-        A_est, B_est = make_modified_game(A, B, att_row=bel_est_before, att_col=att_est_before)
+
+        # =========================
+        # FIX: prob_est MUST match paper Step 5(a) "Update error estimate"
+        # paper: set att_agent = bel_opp (estimated), use att_opp = att_opp (estimated)
+        # =========================
+        att_agent_for_error = float(np.clip(bel_est_before, -1.0, 1.0))  # att_agent = bel_opp
+        att_opp_for_error = float(np.clip(att_est_before, -1.0, 1.0))    # estimated opponent attitude
+
+        A_est, B_est = make_modified_game(A, B, att_row=att_agent_for_error, att_col=att_opp_for_error)
+
         try:
-            _, sigma_col_est = solve_robust(nash.Game(A_est, B_est), nash_est_before)
+            _, sigma_col_est = solve_robust(nash.Game(A_est, B_est), int(nash_est_before))
             sigma_col_est = safe_sigma(sigma_col_est, n_actions)
         except KeyboardInterrupt:
             raise
@@ -131,7 +152,7 @@ def run_stationary(T=1000, n_actions=16, seed=42, outdir="results", lookup_path=
 
         prob_est_t = float(sigma_col_est[opp_move])
 
-        if t in (0, 1, 2, 5, 10) or t % 100 == 0:
+        if (not quiet) and (t in (0, 1, 2, 5, 10) or t % 100 == 0):
             print(f"\n[STEP t={t}]")
             print(f"  Actions: agent_move={agent_move}, opp_move={opp_move}")
             print(f"  Payoffs: r_agent={r_agent:.4f}, r_opp={r_opp:.4f}")
@@ -139,20 +160,22 @@ def run_stationary(T=1000, n_actions=16, seed=42, outdir="results", lookup_path=
             print(f"  True opponent params:     att_true={opp_att:.3f}, bel_true={opp_bel:.3f}")
             print(f"  Probabilities: prob_true={prob_true_t:.6f}, prob_est={prob_est_t:.6f}")
 
-        debug_particles(agent, label="BEFORE update_model()", t=t, every=100)
+        if not quiet:
+            debug_particles(agent, label="BEFORE update_model()", t=t, every=100)
 
-        # 5) Update
+        # 5) Update (particle filter update uses agent.m)
         agent.m = opp_move
         error_est = agent.update_model()
 
         att_est_after = float(agent.estimate_attitude())
         bel_est_after = float(agent.estimate_belief())
 
-        if t in (0, 1, 2, 5, 10) or t % 100 == 0:
+        if (not quiet) and (t in (0, 1, 2, 5, 10) or t % 100 == 0):
             print(f"  error_est returned by update_model(): {error_est}")
             print(f"  Estimates AFTER update:  att_est={att_est_after:.3f}, bel_est={bel_est_after:.3f}")
 
-        debug_particles(agent, label="AFTER update_model()", t=t, every=100)
+        if not quiet:
+            debug_particles(agent, label="AFTER update_model()", t=t, every=100)
 
         te = float(np.sqrt((opp_att - att_est_after) ** 2 + (opp_bel - bel_est_after) ** 2))
 
@@ -170,11 +193,12 @@ def run_stationary(T=1000, n_actions=16, seed=42, outdir="results", lookup_path=
         logs["prob_est"].append(prob_est_t)
         logs["error_est"].append(float(error_est) if error_est is not None else np.nan)
 
-    print("\n[SUMMARY] Final estimates")
-    print(f"  True opponent params: att_true={opp_att:.3f}, bel_true={opp_bel:.3f}")
-    print(f"  Final estimates:      att_est={logs['att_est_after'][-1]:.3f}, bel_est={logs['bel_est_after'][-1]:.3f}")
-    print(f"  Final true error:     {logs['true_error'][-1]:.6f}")
-    print(f"  Avg true error:       {float(np.mean(logs['true_error'])):.6f}")
+    if not quiet:
+        print("\n[SUMMARY] Final estimates")
+        print(f"  True opponent params: att_true={opp_att:.3f}, bel_true={opp_bel:.3f}")
+        print(f"  Final estimates:      att_est={logs['att_est_after'][-1]:.3f}, bel_est={logs['bel_est_after'][-1]:.3f}")
+        print(f"  Final true error:     {logs['true_error'][-1]:.6f}")
+        print(f"  Avg true error:       {float(np.mean(logs['true_error'])):.6f}")
 
     os.makedirs(outdir, exist_ok=True)
     out_path = os.path.join(outdir, f"stationary_seed{seed}_A{n_actions}_T{T}.npz")
@@ -191,7 +215,8 @@ def run_stationary(T=1000, n_actions=16, seed=42, outdir="results", lookup_path=
     }
 
     np.savez_compressed(out_path, **{k: np.asarray(v) for k, v in logs.items()}, meta=json.dumps(meta))
-    print(f"[INFO] Saved run to: {out_path}")
+    if not quiet:
+        print(f"[INFO] Saved run to: {out_path}")
 
     compute_metrics(
         logs["att_est_after"],
@@ -203,7 +228,8 @@ def run_stationary(T=1000, n_actions=16, seed=42, outdir="results", lookup_path=
         est_errors=logs["error_est"],
     )
 
-    print("[INFO] Simulation finished.")
+    if not quiet:
+        print("[INFO] Simulation finished.")
 
 
 if __name__ == "__main__":
@@ -214,6 +240,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_actions", type=int, default=16)
     parser.add_argument("--outdir", type=str, default="results")
     parser.add_argument("--lookup", type=str, default="lookup_table.npz")
+    parser.add_argument("--quiet", action="store_true", help="suppress prints + tqdm")
     args = parser.parse_args()
 
     if args.scenario == "stationary":
@@ -223,4 +250,5 @@ if __name__ == "__main__":
             seed=args.seed,
             outdir=args.outdir,
             lookup_path=args.lookup,
+            quiet=bool(args.quiet),
         )

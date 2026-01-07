@@ -127,11 +127,12 @@ class CooperativeAgentAlgorithm:
         self.last_bel_opp_est = bel_opp_est
         self.last_nash_opp = int(nash_opp)
 
-        # (3b) Set own attitude: att_agent = att_opp + r  (paper)
+        # (3b) Reciprocation rule (paper)
         att_agent = self.clip_att(att_opp_est + self.r)
 
-        # (3c) Modified game for actual play uses (att_agent, att_opp)
-        A_mod, B_mod = make_modified_game(self.A, self.B, att_row=att_agent, att_col=att_opp_est)
+        # (3c) Agent's modified utility ONLY (Eq. 1)
+        A_mod = self.A + att_agent * self.B
+        B_mod = self.B  # do NOT inject opponent attitude here
 
         sol = solve_robust(nash.Game(A_mod, B_mod), nash_opp)
         if sol is None:
@@ -143,10 +144,9 @@ class CooperativeAgentAlgorithm:
         sigma_row = safe_probvec(sigma_row, self.nb_actions)
         sigma_col = safe_probvec(sigma_col, self.nb_actions)
 
-        # optional diagnostics
         self.last_sigma_col_pred = sigma_col
-
         return int(self.rng.choice(self.nb_actions, p=sigma_row))
+
 
     def observe_opponent_move(self, m: int) -> None:
         self.m = int(m)
@@ -154,31 +154,33 @@ class CooperativeAgentAlgorithm:
     def update_model(self) -> float:
         """
         Paper step 5:
-          (a) Update error estimate
-          (b) Resample particles
-          (c) Perturb
+        (a) Update error estimate using opponent's predicted game-view:
+            set att_agent = bel_opp, att_opp = att_opp, solve with opponent Nash-label,
+            j = prob assigned to observed move.
+        (b) Resample particles using likelihood of observed move under each particle.
+        (c) Perturb particles with N(., err * f_ab) and mutate Nash-label with prob err * f_nash.
         """
         assert self.A is not None and self.B is not None
 
-        # ---------- (5a) error estimate ----------
-        # Paper says: set att_agent = bel_opp
-        # i.e., the game the opponent THINKS it is playing uses:
-        #   row attitude = bel_opp, col attitude = att_opp
+        EPS = 1e-12
+
+        # (5a) error estimate(paper: att_agent = bel_opp)
         A_pred, B_pred = make_modified_game(
             self.A, self.B,
-            att_row=self.last_bel_opp_est,
-            att_col=self.last_att_opp_est,
+            att_row=float(self.last_bel_opp_est),  # att_agent = bel_opp
+            att_col=float(self.last_att_opp_est),  # att_opp   = att_opp
         )
 
-        sol = solve_robust(nash.Game(A_pred, B_pred), self.last_nash_opp)
+        sol = solve_robust(nash.Game(A_pred, B_pred), int(self.last_nash_opp))
         if sol is None:
-            sigma_col = np.ones(self.nb_actions) / self.nb_actions
+            sigma_col = np.ones(self.nb_actions, dtype=float) / self.nb_actions
         else:
             _, sigma_col = sol
-        sigma_col = safe_probvec(sigma_col, self.nb_actions)
+            sigma_col = safe_probvec(sigma_col, self.nb_actions)
 
-        p_obs = float(sigma_col[self.m])
+        p_obs = float(sigma_col[self.m])  # paper's j
 
+        # cooperation computed from CURRENT particle-mean estimates (raw)
         att_est = self.clip_att(self.estimate_attitude())
         bel_est = self.clip_att(self.estimate_belief())
         coop = float(np.clip(self.cooperation(att_est, bel_est), -1.0, 1.0))
@@ -201,22 +203,19 @@ class CooperativeAgentAlgorithm:
 
         error_est = float(np.clip(error_est, 1e-6, 2.0))
 
-        # ---------- (5b) resample particles ----------
+        # (5b) resample
         weights = np.zeros(self.n, dtype=float)
 
         for i, p in enumerate(self.particles):
-            # Particle defines opponent parameters (att, bel)
-            # Opponent prediction uses: att_row = bel, att_col = att
-            pA, pB = make_modified_game(self.A, self.B, att_row=p.bel, att_col=p.att)
+            pA, pB = make_modified_game(self.A, self.B, att_row=float(p.bel), att_col=float(p.att))
 
-            psol = solve_robust(nash.Game(pA, pB), p.nash)
+            psol = solve_robust(nash.Game(pA, pB), int(p.nash))
             if psol is None:
-                p_sigma_col = np.ones(self.nb_actions) / self.nb_actions
+                p_sigma_col = np.ones(self.nb_actions, dtype=float) / self.nb_actions
             else:
                 _, p_sigma_col = psol
+                p_sigma_col = safe_probvec(p_sigma_col, self.nb_actions)
 
-            p_sigma_col = safe_probvec(p_sigma_col, self.nb_actions)
-            # avoid exact zeros killing weights
             weights[i] = max(float(p_sigma_col[self.m]), EPS)
 
         sw = float(weights.sum())
@@ -228,16 +227,17 @@ class CooperativeAgentAlgorithm:
         idx = self.rng.choice(self.n, size=self.n, replace=True, p=weights)
         resampled = [self.particles[i] for i in idx]
 
-        # ---------- (5c) perturb ----------
+        # (5c) perturb
         sigma = float(max(1e-6, error_est * self.fab))
+        p_change_nash = float(np.clip(error_est * self.fnash, 0.0, 1.0))
+
         new_particles: list[Particle] = []
-
         for p in resampled:
-            att_new = self.clip_att(self.rng.normal(loc=p.att, scale=sigma))
-            bel_new = self.clip_att(self.rng.normal(loc=p.bel, scale=sigma))
-            nash_new = int(p.nash)
+            att_new = self.clip_att(self.rng.normal(loc=float(p.att), scale=sigma))
+            bel_new = self.clip_att(self.rng.normal(loc=float(p.bel), scale=sigma))
 
-            if self.rng.random() < float(np.clip(error_est * self.fnash, 0.0, 1.0)):
+            nash_new = int(p.nash)
+            if self.rng.random() < p_change_nash:
                 nash_new = int(self.rng.integers(0, 2 * self.nb_actions))
 
             new_particles.append(Particle(att=att_new, bel=bel_new, nash=nash_new))
