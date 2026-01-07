@@ -1,65 +1,54 @@
+# src/agent.py
 from __future__ import annotations
-
 from dataclasses import dataclass
-import numpy as np
 from collections import Counter
-
-from modified_game import make_modified_game
-from nash import solve_robust
+import numpy as np
 import nashpy as nash
+
+from src.modified_game import make_modified_game
+from src.nash_solve import solve_robust, safe_probvec
 
 
 @dataclass
 class Particle:
-    att: float  # attitude
-    bel: float  # belief
-    nash: int   # label of method to choose a Nash equilibrium
+    att: float  # opponent attitude estimate
+    bel: float  # opponent belief about us estimate
+    nash: int   # Lemke–Howson dropped label (opponent Nash-selection proxy)
 
 
 class CooperativeAgentAlgorithm:
-
-    ####### 1. Initialize #######
     def __init__(
         self,
-        ### (a) Select values for parameters ###
         rng: np.random.Generator,
-        nb_actions: int = 16,                    # Number of actions   (16 is the best empirical number of actions given by authors)
-        nb_particles: int = 100,                 # Number of particles (No given number in the paper)
-        reciprocation: float = 0.1,              # Reciprocation level (Authors use a reciprocation level of .1)
-        fab: float = 0.1,                        # Perturbation factor for attitude and belief (Authors use 10% of the error in the current estimate)
-        fnash: float = 0.05,                     # Perturbation factor for methods of picking Nash equilibria (No given number in the paper)
-        error_levels: np.ndarray | None = None,  # Set of error levels (No given number in the paper)
-        p_error: np.ndarray | None = None,       # Distribution over error levels (No given number in the paper)
-        lookup_path: str | None = None,          # Path to lookup_table.npz
+        nb_actions: int = 16,
+        nb_particles: int = 100,
+        reciprocation: float = 0.1,
+        fab: float = 0.1,
+        fnash: float = 0.05,
+        error_levels: np.ndarray | None = None,
+        p_error: np.ndarray | None = None,
+        lookup_path: str | None = None,
     ):
-        self.nb_actions = nb_actions
-        self.n = nb_particles
-        self.r = reciprocation
-        self.fab = fab
-        self.fnash = fnash
         self.rng = rng
-
-        ### (b) lookup table T with t(j,k,l) ###
-        # We load a precomputed lookup table:
-        #   T[j,k,l] ≈ P( observed-probability-bin = j | cooperation-bin = k, error-level = l )
-        # This lets us update P_error online.
+        self.nb_actions = int(nb_actions)
+        self.n = int(nb_particles)
+        self.r = float(reciprocation)
+        self.fab = float(fab)
+        self.fnash = float(fnash)
 
         self.use_lookup = False
-
         if lookup_path is not None:
             data = np.load(lookup_path, allow_pickle=True)
-
-            self.T = data["T"]  # shape (J, K, L)
-            self.prob_edges = data["prob_edges"]  # length J+1
-            self.coop_edges = data["coop_edges"]  # length K+1
+            self.T = np.asarray(data["T"], dtype=float)                # (J,K,L)
+            self.prob_edges = np.asarray(data["prob_edges"], dtype=float)
+            self.coop_edges = np.asarray(data["coop_edges"], dtype=float)
 
             if error_levels is None:
-                self.error_levels = data["error_levels"]  # length L
+                self.error_levels = np.asarray(data["error_levels"], dtype=float)
             else:
                 self.error_levels = np.asarray(error_levels, dtype=float)
 
             L = len(self.error_levels)
-
             if p_error is None:
                 self.P_error = np.ones(L, dtype=float) / L
             else:
@@ -69,36 +58,29 @@ class CooperativeAgentAlgorithm:
 
             self.use_lookup = True
 
-        ### (c) initial particle set ###
-        set_particles = []
-
-        for i in range(self.n):
+        # particles
+        self.particles: list[Particle] = []
+        for _ in range(self.n):
             att = float(np.clip(self.rng.normal(0.0, 1.0), -1.0, 1.0))
             bel = float(np.clip(self.rng.normal(0.0, 1.0), -1.0, 1.0))
-            nash = int(self.rng.integers(0, 2 * self.nb_actions))  # uniform over possible dropped labels
-            set_particles.append(Particle(att=att, bel=bel, nash=nash))
+            nash_label = int(self.rng.integers(0, 2 * self.nb_actions))
+            self.particles.append(Particle(att=att, bel=bel, nash=nash_label))
 
-        self.particles = set_particles
-
-        # keeps last nash_opp for pick and update
-        self.last_nash_opp = 0
-        self.last_att_opp = 0.0
-        self.last_bel_opp = 0.0
-
-        # observed opponent move
+        # per-round stored values
+        self.A = None
+        self.B = None
         self.m = 0
 
-    ####### 2. Observe game G #######
+        self.last_att_opp_est = 0.0
+        self.last_bel_opp_est = 0.0
+        self.last_nash_opp = 0
 
-    def observe_game(self, A: np.ndarray, B: np.ndarray):
-        self.A = A
-        self.B = B
+        self.last_att_agent_used = 0.0
+        self.last_att_opp_used = 0.0
 
-    ####### Helper functions #######
-
+    # ---------- helpers ----------
     @staticmethod
     def cooperation(att: float, bel: float) -> float:
-        # Paper's cooperation score (Eq.3 in your builder script)
         denom = np.sqrt(att * att + 1.0) * np.sqrt(bel * bel + 1.0)
         return float((att + bel) / denom)
 
@@ -108,75 +90,8 @@ class CooperativeAgentAlgorithm:
         return int(np.clip(idx, 0, len(edges) - 2))
 
     @staticmethod
-    def safe_probvec(p: np.ndarray, n: int) -> np.ndarray:
-        """
-        Ensures p is a valid probability distribution of size n.
-        If p is invalid (NaNs, wrong shape, sum=0), returns uniform dist.
-        """
-        # Flatten to ensure 1D array
-        p = np.asarray(p, dtype=float).flatten()
-        
-        # GUARD CLAUSE: Strict shape check
-        if p.shape[0] != n:
-            return np.ones(n, dtype=float) / n
-            
-        # Check for NaNs or Infinite values
-        if not np.isfinite(p).all():
-            return np.ones(n, dtype=float) / n
-            
-        # Clip negatives and normalize
-        p = np.clip(p, 0.0, None)
-        s = p.sum()
-        
-        if s <= 0.0:
-            return np.ones(n, dtype=float) / n
-            
-        return p / s
-
-    ####### 3. Pick Move #######
-
-    def pick_move(self):
-        # (a) Estimate opponent’s parameters
-        att_opp = self.estimate_attitude()
-        bel_opp = self.estimate_belief()
-        # Most frequent Nash selection method among particles
-        nash_opp = Counter([p.nash for p in self.particles]).most_common(1)[0][0]
-
-        self.last_att_opp = att_opp
-        self.last_bel_opp = bel_opp
-        self.last_nash_opp = int(nash_opp)
-
-        # (b) Set own attitude using reciprocation constant r
-        att_agent = float(np.clip(att_opp + self.r, -1.0, 1.0))
-
-        # (c) Construct modified game G' (Eq. 1 from paper)
-        A_mod, B_mod = make_modified_game(self.A, self.B, att_agent, att_opp)
-        
-        # Solve using robust wrapper to catch Lemke-Howson failures
-        result = solve_robust(nash.Game(A_mod, B_mod), int(nash_opp))
-        
-        if result is not None:
-            sigma_row, sigma_col = result
-        else:
-            # Fallback to uniform distribution if solver fails
-            sigma_row = np.ones(self.nb_actions) / self.nb_actions
-            sigma_col = np.ones(self.nb_actions) / self.nb_actions
-
-        # (d) FINAL SAFETY: Ensure both vectors are valid probability distributions
-        # This prevents "ValueError: a and p must have same size" and NaN errors
-        sigma_row = self.safe_probvec(sigma_row, self.nb_actions)
-        sigma_col = self.safe_probvec(sigma_col, self.nb_actions)
-
-        # Store prediction for the update_model phase
-        self.last_sigma_col_pred = sigma_col
-        
-        # Draw move based on the calculated strategy
-        return int(self.rng.choice(self.nb_actions, p=sigma_row))
-
-    ####### 4. Observe opponent move m #######
-
-    def observe_opponent_move(self, m: int) -> None:
-        self.m = int(m)
+    def clip_att(x: float) -> float:
+        return float(np.clip(x, -1.0, 1.0))
 
     def estimate_attitude(self) -> float:
         return float(np.mean([p.att for p in self.particles]))
@@ -187,104 +102,130 @@ class CooperativeAgentAlgorithm:
     def estimate_nash(self) -> int:
         return int(Counter([p.nash for p in self.particles]).most_common(1)[0][0])
 
-    ####### 5. Update Model #######
+    # ---------- API ----------
+    def observe_game(self, A: np.ndarray, B: np.ndarray) -> None:
+        self.A = np.asarray(A, float)
+        self.B = np.asarray(B, float)
 
-    def update_model(self):
-        """
-        Updates the error estimate and resamples particles based on the observed move.
-        This version is robust against solver failures and dimension mismatches.
-        """
-        # (a) Update error estimate
-        # ---------------------------
-        att_agent = float(self.last_bel_opp)
-        att_opp = float(self.last_att_opp)
-        A_mod, B_mod = make_modified_game(self.A, self.B, att_agent, att_opp)
-        
-        # Solve for the strategy we EXPECTED the opponent to play
-        sol = solve_robust(nash.Game(A_mod, B_mod), int(self.last_nash_opp))
-        
-        if sol is not None:
-            _, sigma_col = sol
-        else:
+    def pick_move(self) -> int:
+        assert self.A is not None and self.B is not None
+
+        # (a) estimate opponent params
+        att_opp_est = self.clip_att(self.estimate_attitude())
+        bel_opp_est = self.clip_att(self.estimate_belief())
+        nash_opp = self.estimate_nash()
+
+        self.last_att_opp_est = att_opp_est
+        self.last_bel_opp_est = bel_opp_est
+        self.last_nash_opp = int(nash_opp)
+
+        # (b) reciprocation rule (paper)
+        att_agent_used = self.clip_att(att_opp_est + self.r)
+        # opponent's *used* attitude depends on opponent's belief about us
+        att_opp_used = self.clip_att(bel_opp_est + self.r)
+
+        self.last_att_agent_used = att_agent_used
+        self.last_att_opp_used = att_opp_used
+
+        # (c) build modified game with *used* attitudes
+        A_mod, B_mod = make_modified_game(self.A, self.B, att_agent_used, att_opp_used)
+
+        sol = solve_robust(nash.Game(A_mod, B_mod), nash_opp)
+        if sol is None:
+            sigma_row = np.ones(self.nb_actions) / self.nb_actions
             sigma_col = np.ones(self.nb_actions) / self.nb_actions
-            
-        # SAFETY: Ensure sigma_col is exactly size nb_actions (16)
-        sigma_col = self.safe_probvec(sigma_col, self.nb_actions)
-        
-        # Now safe to index with self.m
+        else:
+            sigma_row, sigma_col = sol
+
+        sigma_row = safe_probvec(sigma_row, self.nb_actions)
+        sigma_col = safe_probvec(sigma_col, self.nb_actions)
+
+        # store predicted opponent strategy if you want diagnostics
+        self.last_sigma_col_pred = sigma_col
+
+        return int(self.rng.choice(self.nb_actions, p=sigma_row))
+
+    def observe_opponent_move(self, m: int) -> None:
+        self.m = int(m)
+
+    def update_model(self) -> float:
+        assert self.A is not None and self.B is not None
+
+        # ---------- (a) error estimate ----------
+        # predict opponent move prob under our current estimates (as in pick_move)
+        A_mod, B_mod = make_modified_game(self.A, self.B, self.last_att_agent_used, self.last_att_opp_used)
+        sol = solve_robust(nash.Game(A_mod, B_mod), self.last_nash_opp)
+        if sol is None:
+            sigma_col = np.ones(self.nb_actions) / self.nb_actions
+        else:
+            _, sigma_col = sol
+        sigma_col = safe_probvec(sigma_col, self.nb_actions)
+
         p_obs = float(sigma_col[self.m])
 
-        # iv. Calculate cooperation value k
-        att_est = float(np.clip(self.estimate_attitude(), -1.0, 1.0))
-        bel_est = float(np.clip(self.estimate_belief(), -1.0, 1.0))
+        att_est = self.clip_att(self.estimate_attitude())
+        bel_est = self.clip_att(self.estimate_belief())
         coop = float(np.clip(self.cooperation(att_est, bel_est), -1.0, 1.0))
 
-        # Update P(error) using the lookup table
         if self.use_lookup:
             j = self.bin_index(p_obs, self.prob_edges)
             k = self.bin_index(coop, self.coop_edges)
             lik = np.asarray(self.T[j, k, :], dtype=float)
-            
+
             self.P_error *= lik
             s = float(self.P_error.sum())
-            
             if (not np.isfinite(s)) or s <= 0.0:
                 self.P_error[:] = 1.0 / len(self.P_error)
             else:
                 self.P_error /= s
-            
+
             error_est = float(np.dot(self.P_error, self.error_levels))
         else:
-            error_est = 0.2 # Fallback if no table
+            error_est = 0.2
 
-        # (b) Resample particles
-        # ----------------------
+        error_est = float(np.clip(error_est, 1e-6, 2.0))
+
+        # ---------- (b) resample ----------
         weights = np.zeros(self.n, dtype=float)
-        
+
         for i, p in enumerate(self.particles):
-            # Create the game from this particle's perspective
-            p_A, p_B = make_modified_game(self.A, self.B, att_row=p.bel, att_col=p.att)
-            
-            # Solve it
-            p_sol = solve_robust(nash.Game(p_A, p_B), int(p.nash))
-            
-            if p_sol is not None:
-                _, p_sigma_col = p_sol
-            else:
-                # If solver fails, assume uniform distribution
+            # particle implies these used attitudes this round
+            att_agent_used = self.clip_att(p.att + self.r)
+            att_opp_used = self.clip_att(p.bel + self.r)
+
+            pA, pB = make_modified_game(self.A, self.B, att_agent_used, att_opp_used)
+            psol = solve_robust(nash.Game(pA, pB), p.nash)
+
+            if psol is None:
                 p_sigma_col = np.ones(self.nb_actions) / self.nb_actions
-                
-            # SAFETY CHECK (The Fix): 
-            # Force the vector to be valid and size 16 BEFORE accessing index [self.m]
-            p_sigma_col = self.safe_probvec(p_sigma_col, self.nb_actions)
-            
+            else:
+                _, p_sigma_col = psol
+
+            p_sigma_col = safe_probvec(p_sigma_col, self.nb_actions)
             weights[i] = float(p_sigma_col[self.m])
 
-        # ii. Draw n particles
-        if weights.sum() <= 0.0:
-            weights = np.ones(self.n) / self.n
+        sw = float(weights.sum())
+        if sw <= 0.0 or (not np.isfinite(sw)):
+            weights[:] = 1.0 / self.n
         else:
-            weights = weights / weights.sum()
+            weights /= sw
 
-        p_idx = self.rng.choice(self.n, size=self.n, p=weights)
-        new_particles = [self.particles[i] for i in p_idx]
+        idx = self.rng.choice(self.n, size=self.n, replace=True, p=weights)
+        resampled = [self.particles[i] for i in idx]
 
-        # (c) Perturb particles
-        # ---------------------
-        perturb_particles = []
-        # Perturbation scales with the estimated error
-        sigma = max(1e-6, error_est * self.fab)
+        # ---------- (c) perturb ----------
+        sigma = float(max(1e-6, error_est * self.fab))
+        new_particles: list[Particle] = []
 
-        for p in new_particles:
-            att_new = float(np.clip(self.rng.normal(loc=p.att, scale=sigma), -1.0, 1.0))
-            bel_new = float(np.clip(self.rng.normal(loc=p.bel, scale=sigma), -1.0, 1.0))
-            
+        for p in resampled:
+            att_new = self.clip_att(self.rng.normal(loc=p.att, scale=sigma))
+            bel_new = self.clip_att(self.rng.normal(loc=p.bel, scale=sigma))
             nash_new = int(p.nash)
-            # Occasionally perturb the Nash equilibrium selection method
-            if self.rng.random() < error_est * self.fnash:
+
+            if self.rng.random() < float(np.clip(error_est * self.fnash, 0.0, 1.0)):
                 nash_new = int(self.rng.integers(0, 2 * self.nb_actions))
 
-            perturb_particles.append(Particle(att=att_new, bel=bel_new, nash=nash_new))
+            new_particles.append(Particle(att=att_new, bel=bel_new, nash=nash_new))
 
-        self.particles = perturb_particles
+        self.particles = new_particles
         return error_est

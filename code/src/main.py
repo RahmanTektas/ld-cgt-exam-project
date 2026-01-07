@@ -122,7 +122,7 @@ def run_stationary(T=1000, n_actions=16, seed=42, outdir="results", lookup_path=
         nash_est_before = Counter([p.nash for p in agent.particles]).most_common(1)[0][0]
         A_est, B_est = make_modified_game(A, B, att_row=bel_est_before, att_col=att_est_before)
         try:
-            _, sigma_col_est = solve_robust(nash.game(A_est, B_est), nash_est_before)
+            _, sigma_col_est = solve_robust(nash.Game(A_est, B_est), nash_est_before)
             sigma_col_est = safe_sigma(sigma_col_est, n_actions)
         except KeyboardInterrupt:
             raise

@@ -9,6 +9,8 @@ def random_bimatrix_game(num_actions: int, rng: np.random.Generator | None = Non
       A: (num_actions, num_actions) payoffs for player 1
       B: (num_actions, num_actions) payoffs for player 2
     """
+    if rng is None:
+        rng = np.random.default_rng()
     A = rng.random((num_actions, num_actions))
     B = rng.random((num_actions, num_actions))
     return A, B
