@@ -131,8 +131,7 @@ class CooperativeAgentAlgorithm:
         att_agent = self.clip_att(att_opp_est + self.r)
 
         # (3c) Agent's modified utility ONLY (Eq. 1)
-        A_mod = self.A + att_agent * self.B
-        B_mod = self.B  # do NOT inject opponent attitude here
+        A_mod, B_mod = make_modified_game(self.A, self.B, att_row=att_agent, att_col=att_opp_est)
 
         sol = solve_robust(nash.Game(A_mod, B_mod), nash_opp)
         if sol is None:

@@ -11,7 +11,7 @@ import nashpy as nash
 from src.game import random_bimatrix_game
 from src.modified_game import make_modified_game
 from src.nash import solve_robust, safe_probvec
-from src.agent import CooperativeAgentAlgorithm  # <-- make sure your fixed agent is in src/agent.py
+from src.CooperativeAgent import CooperativeAgentAlgorithm  # <-- make sure your fixed agent is in src/agent.py
 
 
 # ----------------------------
