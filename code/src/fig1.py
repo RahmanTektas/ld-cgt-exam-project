@@ -26,6 +26,10 @@ from game import random_bimatrix_game
 from modified_game import make_modified_game
 from nash import solve_robust, safe_probvec
 
+N_GAMES = 1000
+N_ACTIONS = 16
+GRID_N = 20
+
 logger = logging.getLogger(__name__)
 
 def colored_wireframe(ax, X, Y, Z, cmap=cm.viridis, lw=0.8):
@@ -87,6 +91,8 @@ def _compute_chunk(args):
     counts = np.zeros((grid_n, grid_n), dtype=np.int32)
 
     for game_idx in range(n_games):
+        if(game_idx%50)==0:
+            print(game_idx)
         logger.debug("Generating random game %d/%d (seed=%d)", game_idx + 1, n_games, seed)
         A, B = random_bimatrix_game(n_actions, rng=rng)
 
@@ -97,7 +103,7 @@ def _compute_chunk(args):
                 if label_mode == "fixed0":
                     label = 0
                 else:
-                    # 'random' or other modes draw a label per solve
+                    # 'random' mode
                     label = int(rng.integers(0, 2 * n_actions))
 
                 res = solve_robust(nash.Game(A2, B2), label)
@@ -202,35 +208,30 @@ def plot_fig1(grid, avg_payoff):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compute and plot Fig.1 payoff surface")
-    parser.add_argument("--games", type=int, default=1000)
-    parser.add_argument("--actions", type=int, default=16)
-    parser.add_argument("--grid", type=int, default=21)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--workers", type=int, default=0, help="0 = no multiprocessing")
-    parser.add_argument("--label_mode", choices=["random", "fixed0"], default="random",
-                        help="random = random dropped label per solve (recommended). fixed0 = always 0 (can bias).")
+    parser.add_argument("--label_mode", choices=["random", "fixed0"], default="random")
     parser.add_argument("--save", type=str, default="fig1_surface.npz")
-    parser.add_argument("--no_plot", action="store_true")
     args = parser.parse_args()
 
     # configure simple logging to stdout for convenience
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
     grid, avg_payoff, counts = compute_fig1_surface(
-        n_games=args.games,
-        n_actions=args.actions,
-        grid_n=args.grid,
+        n_games=N_GAMES,
+        n_actions=N_ACTIONS,
+        grid_n=GRID_N,
         seed=args.seed,
         n_workers=args.workers,
         label_mode=args.label_mode,
     )
 
     np.savez(args.save, grid=grid, Z=avg_payoff, C=counts,
-             games=args.games, actions=args.actions, grid_n=args.grid,
+             games=N_GAMES, actions=N_ACTIONS, grid_n=GRID_N,
              seed=args.seed, label_mode=args.label_mode)
 
     logger.info("saved %s", args.save)
-    logger.info("mean count per cell: %.1f (should be close to %d if few failures)", counts.mean(), args.games)
+    logger.info("mean count per cell: %.1f (should be close to %d if few failures)", counts.mean(),N_GAMES)
 
-    if not args.no_plot:
-        plot_fig1(grid, avg_payoff)
+
+    plot_fig1(grid, avg_payoff)
