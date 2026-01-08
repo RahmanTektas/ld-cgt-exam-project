@@ -29,7 +29,7 @@ class CooperativeAgentAlgorithm:
         self,
         rng: np.random.Generator,
         nb_actions: int = 16,
-        nb_particles: int = 100,
+        nb_particles: int = 200,
         reciprocation: float = 0.1,
         fab: float = 0.1,
         fnash: float = 0.05,
@@ -37,6 +37,7 @@ class CooperativeAgentAlgorithm:
         p_error: np.ndarray | None = None,
         lookup_path: str | None = None,
     ):
+        self.last_att_agent: float = 0.0  # for logging
         self.rng = rng
         self.nb_actions = int(nb_actions)
         self.n = int(nb_particles)
@@ -128,10 +129,15 @@ class CooperativeAgentAlgorithm:
         self.last_nash_opp = int(nash_opp)
 
         # (3b) Reciprocation rule (paper)
-        att_agent = self.clip_att(att_opp_est + self.r)
+      
+        # att_agent = self.clip_att(att_opp_est + self.r)
+        
+        att_agent = np.clip((att_opp_est + self.r), 0, 1.0)
+        self.last_att_agent = float(att_agent)  
+
 
         # (3c) Agent's modified utility ONLY (Eq. 1)
-        A_mod, B_mod = make_modified_game(self.A, self.B, att_row=att_agent, att_col=att_opp_est)
+        A_mod, B_mod = make_modified_game(self.A, self.B, att_row=-att_agent, att_col=-att_opp_est)
 
         sol = solve_robust(nash.Game(A_mod, B_mod), nash_opp)
         if sol is None:
@@ -164,11 +170,15 @@ class CooperativeAgentAlgorithm:
         EPS = 1e-12
 
         # (5a) error estimate(paper: att_agent = bel_opp)
+        att_agent_pred = float(np.clip(self.last_bel_opp_est, 0.0, 1.0))  # constraint self-play
+        att_opp_pred   = float(np.clip(self.last_att_opp_est, -1.0, 1.0)) 
+
         A_pred, B_pred = make_modified_game(
             self.A, self.B,
-            att_row=float(self.last_bel_opp_est),  # att_agent = bel_opp
-            att_col=float(self.last_att_opp_est),  # att_opp   = att_opp
+            att_row=att_agent_pred,   # att_agent
+            att_col=att_opp_pred,     # att_opp
         )
+
 
         sol = solve_robust(nash.Game(A_pred, B_pred), int(self.last_nash_opp))
         if sol is None:

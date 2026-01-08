@@ -53,12 +53,13 @@ def run_selfplay_once(
     coop_level = np.zeros(T, dtype=float)
 
     for t in range(T):
+        
         # New random game each round
         A, B = random_bimatrix_game(n_actions, rng=rng_env)
 
         # Both observe the same underlying game, but with swapped perspective
         agentA.observe_game(A, B)  # agentA is "row"
-        agentB.observe_game(B, A)  # agentB is "row" in its own internal view
+        agentB.observe_game(B.T, A.T)  # agentB is "row" in its own internal view
 
         # Pick moves
         a_move = agentA.pick_move()
@@ -74,13 +75,24 @@ def run_selfplay_once(
         agentA.observe_opponent_move(b_move)
         agentB.observe_opponent_move(a_move)
 
-        agentA.update_model()
-        agentB.update_model()
+        
 
         # Cooperation metric (paper Eq.3) from each agent's current estimates
-        coopA = cooperation(agentA.estimate_attitude(), agentA.estimate_belief())
-        coopB = cooperation(agentB.estimate_attitude(), agentB.estimate_belief())
+        coopA = cooperation(agentA.last_att_agent, agentA.estimate_belief())
+        coopB = cooperation(agentB.last_att_agent, agentB.estimate_belief())
         coop_level[t] = 0.5 * (coopA + coopB)
+        if t < 5:
+            print("A:", agentA.last_att_agent, agentA.estimate_belief(), cooperation(agentA.last_att_agent, agentA.estimate_belief()))
+
+                # if t < 50:
+        #     print(f"[t={t}] A: att_opp_est={agentA.last_att_opp_est:.3f} "
+        #         f"att_agent={agentA.last_att_agent:.3f} bel_opp_est={agentA.last_bel_opp_est:.3f} "
+        #         f"coop={coop_level[t]:.3f}")
+
+        print("coop min/max:", coop_level.min(), coop_level.max())
+        
+        agentA.update_model()
+        agentB.update_model()
 
     out_path = os.path.join(outdir, f"selfplay_seed{seed}_A{n_actions}_T{T}.npz")
     np.savez_compressed(
@@ -210,10 +222,10 @@ def plot_fig4(mean_payoff: np.ndarray, mean_coop: np.ndarray, save_pdf: str | No
     ax.set_xlabel("Time")
 
     ax.set_xlim(0, T)
-    ax.set_ylim(0, 1)
+    ax.set_ylim(-1, 1)
 
     ax.set_xticks(np.arange(0, T + 1, max(1, T // 10)))
-    ax.set_yticks(np.linspace(0, 1, 11))
+    ax.set_yticks(np.linspace(-1, 1, 11))
     ax.grid(False)
 
     leg = ax.legend(
