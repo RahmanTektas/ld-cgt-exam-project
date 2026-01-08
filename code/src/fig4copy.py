@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import os
 import argparse
+import multiprocessing as mp
+
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-import nashpy as nash
-
-from src.game import random_bimatrix_game
-from src.modified_game import make_modified_game
-from src.nash import solve_robust, safe_probvec
-from src.CooperativeAgent import CooperativeAgentAlgorithm 
+from game import random_bimatrix_game
+from CooperativeAgent import CooperativeAgentAlgorithm
 
 
 # ----------------------------
@@ -19,7 +17,7 @@ from src.CooperativeAgent import CooperativeAgentAlgorithm
 # ----------------------------
 def cooperation(att: float, bel: float) -> float:
     denom = np.sqrt(att * att + 1.0) * np.sqrt(bel * bel + 1.0)
-    if denom <= 0:
+    if denom <= 0.0:
         return 0.0
     return float((att + bel) / denom)
 
@@ -30,17 +28,9 @@ def ensure_parent_dir(path: str) -> None:
         os.makedirs(parent, exist_ok=True)
 
 
-def safe_sigma(sigma: np.ndarray, n_actions: int) -> np.ndarray:
-    sigma = np.asarray(sigma, dtype=float).flatten()
-    if sigma.shape[0] != n_actions or (not np.isfinite(sigma).all()):
-        return np.ones(n_actions, dtype=float) / n_actions
-    sigma = np.clip(sigma, 0.0, None)
-    s = float(sigma.sum())
-    return sigma / s if s > 0 else (np.ones(n_actions, dtype=float) / n_actions)
-
-
+# ----------------------------
 # One self-play run (one seed)
-
+# ----------------------------
 def run_selfplay_once(
     seed: int,
     T: int = 1000,
@@ -63,33 +53,31 @@ def run_selfplay_once(
     coop_level = np.zeros(T, dtype=float)
 
     for t in range(T):
-        # New random game each round (paper: “randomly generated games” repeatedly)
+        # New random game each round
         A, B = random_bimatrix_game(n_actions, rng=rng_env)
 
-        # Both observe same underlying game
-        agentA.observe_game(A, B)  # row payoff A, col payoff B
-        agentB.observe_game(B, A)  # IMPORTANT: swap perspective for agentB (so it’s symmetric)
+        # Both observe the same underlying game, but with swapped perspective
+        agentA.observe_game(A, B)  # agentA is "row"
+        agentB.observe_game(B, A)  # agentB is "row" in its own internal view
 
         # Pick moves
         a_move = agentA.pick_move()
         b_move = agentB.pick_move()
 
-        # Payoffs in underlying game:
-        # agentA is "row", agentB is "col"
+        # Payoffs in underlying game: agentA uses A, agentB uses B
         rA = float(A[a_move, b_move])
         rB = float(B[a_move, b_move])
 
         avg_payoff[t] = 0.5 * (rA + rB)
 
-        # Each agent observes opponent move
+        # Observe opponent move then update
         agentA.observe_opponent_move(b_move)
         agentB.observe_opponent_move(a_move)
 
-        # Update both
         agentA.update_model()
         agentB.update_model()
 
-        # Cooperation level: compute paper's coop metric for each agent and average them
+        # Cooperation metric (paper Eq.3) from each agent's current estimates
         coopA = cooperation(agentA.estimate_attitude(), agentA.estimate_belief())
         coopB = cooperation(agentB.estimate_attitude(), agentB.estimate_belief())
         coop_level[t] = 0.5 * (coopA + coopB)
@@ -99,12 +87,68 @@ def run_selfplay_once(
         out_path,
         avg_payoff=avg_payoff,
         coop_level=coop_level,
-        seed=seed,
-        T=T,
-        n_actions=n_actions,
+        seed=int(seed),
+        T=int(T),
+        n_actions=int(n_actions),
         lookup_path=str(lookup_path),
     )
     return out_path
+
+
+# ----------------------------
+# Parallel run generation
+# ----------------------------
+def _worker_run_selfplay(args: tuple[int, int, int, str, str, bool]) -> str:
+    """
+    Worker entry-point (Windows spawn-safe).
+    args = (seed, T, n_actions, lookup_path, outdir, force)
+    """
+    seed, T, n_actions, lookup_path, outdir, force = args
+    out_path = os.path.join(outdir, f"selfplay_seed{seed}_A{n_actions}_T{T}.npz")
+
+    if (not force) and os.path.exists(out_path):
+        return out_path
+
+    return run_selfplay_once(
+        seed=seed,
+        T=T,
+        n_actions=n_actions,
+        lookup_path=lookup_path,
+        outdir=outdir,
+    )
+
+
+def generate_selfplay_runs(
+    seeds: list[int],
+    T: int,
+    n_actions: int,
+    lookup_path: str,
+    outdir: str,
+    workers: int = 0,
+    force: bool = False,
+) -> list[str]:
+    os.makedirs(outdir, exist_ok=True)
+    tasks = [(s, T, n_actions, lookup_path, outdir, force) for s in seeds]
+
+    # Sequential
+    if workers <= 0:
+        out_paths = []
+        for task in tqdm(tasks, desc="Self-play runs (single)"):
+            out_paths.append(_worker_run_selfplay(task))
+        return sorted(out_paths)
+
+    # Parallel (Windows-friendly)
+    ctx = mp.get_context("spawn")
+    out_paths: list[str] = []
+    with ctx.Pool(processes=workers) as pool:
+        for p in tqdm(
+            pool.imap_unordered(_worker_run_selfplay, tasks),
+            total=len(tasks),
+            desc=f"Self-play runs ({workers} workers)",
+        ):
+            out_paths.append(p)
+
+    return sorted(out_paths)
 
 
 # ----------------------------
@@ -143,7 +187,7 @@ def plot_fig4(mean_payoff: np.ndarray, mean_coop: np.ndarray, save_pdf: str | No
     fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
     ax = fig.add_subplot(111)
 
-    # Blue dotted payoff
+    # Payoff (blue dotted)
     ax.plot(
         t, mean_payoff,
         color="b",
@@ -153,7 +197,7 @@ def plot_fig4(mean_payoff: np.ndarray, mean_coop: np.ndarray, save_pdf: str | No
         label="Average payoff",
     )
 
-    # Red solid cooperation
+    # Cooperation (red solid)
     ax.plot(
         t, mean_coop,
         color="r",
@@ -165,10 +209,10 @@ def plot_fig4(mean_payoff: np.ndarray, mean_coop: np.ndarray, save_pdf: str | No
     ax.set_title("Achieving cooperation using reciprocation")
     ax.set_xlabel("Time")
 
-    ax.set_xlim(0, 1000)
+    ax.set_xlim(0, T)
     ax.set_ylim(0, 1)
 
-    ax.set_xticks(np.arange(0, 1001, 100))
+    ax.set_xticks(np.arange(0, T + 1, max(1, T // 10)))
     ax.set_yticks(np.linspace(0, 1, 11))
     ax.grid(False)
 
@@ -198,19 +242,24 @@ def plot_fig4(mean_payoff: np.ndarray, mean_coop: np.ndarray, save_pdf: str | No
 # CLI
 # ----------------------------
 def main():
+    mp.freeze_support()  # Windows support
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--T", type=int, default=1000)
     ap.add_argument("--n_actions", type=int, default=16)
     ap.add_argument("--runs", type=int, default=100, help="number of self-play runs (paper uses 100)")
     ap.add_argument("--seed0", type=int, default=0, help="first seed")
+
     ap.add_argument("--outdir", type=str, default="results")
     ap.add_argument("--lookup", type=str, default="lookup_table.npz")
     ap.add_argument("--pdf", type=str, default=None, help="path to save PDF, e.g. report/fig4.pdf")
+
+    ap.add_argument("--workers", type=int, default=0, help="0 = no multiprocessing; else number of processes")
+    ap.add_argument("--force", action="store_true", help="regenerate even if .npz exists")
     ap.add_argument("--skip_run", action="store_true", help="only aggregate+plot existing files")
     args = ap.parse_args()
 
     # Resolve lookup path relative to project root if needed
-    # (Assumes script is in src/plots; project root is ../../)
     here = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(here, "..", ".."))
     lookup_path = args.lookup
@@ -220,18 +269,16 @@ def main():
     seeds = list(range(args.seed0, args.seed0 + args.runs))
 
     if not args.skip_run:
-        print(f"[INFO] Running self-play for {len(seeds)} runs...")
-        for s in tqdm(seeds, desc="Self-play runs"):
-            out_path = os.path.join(args.outdir, f"selfplay_seed{s}_A{args.n_actions}_T{args.T}.npz")
-            if os.path.exists(out_path):
-                continue
-            run_selfplay_once(
-                seed=s,
-                T=args.T,
-                n_actions=args.n_actions,
-                lookup_path=lookup_path,
-                outdir=args.outdir,
-            )
+        print(f"[INFO] Generating {len(seeds)} self-play runs...")
+        _ = generate_selfplay_runs(
+            seeds=seeds,
+            T=args.T,
+            n_actions=args.n_actions,
+            lookup_path=lookup_path,
+            outdir=args.outdir,
+            workers=args.workers,
+            force=args.force,
+        )
 
     print("[INFO] Aggregating...")
     mean_payoff, mean_coop = aggregate_selfplay(

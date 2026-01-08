@@ -4,8 +4,8 @@ from collections import Counter
 import numpy as np
 import nashpy as nash
 
-from src.modified_game import make_modified_game
-from src.nash import solve_robust, safe_probvec, EPS
+from modified_game import make_modified_game
+from nash import solve_robust, safe_probvec, EPS
 
 
 @dataclass
@@ -200,7 +200,7 @@ class CooperativeAgentAlgorithm:
         else:
             error_est = 0.2
 
-        error_est = float(np.clip(error_est, 1e-6, 2.0))
+        error_est = float(np.clip(error_est, 1e-6, max(self.error_levels)))
 
         # (5b) resample
         weights = np.zeros(self.n, dtype=float)
