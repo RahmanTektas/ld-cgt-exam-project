@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  compile:
+  test:
     runs-on: ubuntu-latest
 
     steps:
@@ -14,5 +14,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
       - name: Compile Python sources
         run: python -m compileall -q code/src
+
+      - name: Run tests
+        run: pytest -q
