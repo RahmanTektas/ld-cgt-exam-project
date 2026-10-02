@@ -1,6 +1,5 @@
 from __future__ import annotations
 import numpy as np
-import numpy as np
 
 def make_modified_game(A: np.ndarray, B: np.ndarray, att_row: float, att_col: float):
     """
