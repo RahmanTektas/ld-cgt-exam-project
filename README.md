@@ -31,3 +31,16 @@ report/                  course report sources
 ## Status
 
 This is an academic reproduction repository rather than a packaged library. The code and experiment artifacts are kept primarily to document the implementation and analysis used for the course project.
+
+
+## Environment
+
+The implementation uses Python with NumPy, Nashpy, Matplotlib, and tqdm.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+The main experiment code lives under `code/src/`. The repository also keeps selected generated result files used for analysis and figure reproduction.
