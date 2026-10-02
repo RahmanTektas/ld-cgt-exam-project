@@ -44,3 +44,12 @@ pip install -r requirements.txt
 ```
 
 The main experiment code lives under `code/src/`. The repository also keeps selected generated result files used for analysis and figure reproduction.
+
+
+## Tests
+
+```bash
+pytest -q
+```
+
+The test suite currently covers the payoff transformation used by the cooperative-agent model, including neutral, cooperative, and adversarial attitude settings. GitHub Actions also compiles the Python sources on each push and pull request.
